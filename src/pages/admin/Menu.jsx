@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, orderBy, query } from "fi
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { useToast } from "../../components/shared/Toast";
 import { Plus, Pencil, Trash2, X, Check, UtensilsCrossed, Image } from "lucide-react";
