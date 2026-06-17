@@ -167,7 +167,7 @@ autoCorrect="off"
 style={{ fontSize: 13 }}
 />
 <p style={{ fontSize: 11, color: "var(--gray-500)", marginTop: 6, lineHeight:
-Upload sur <strong>imgbb.com</strong> → copie le <strong>"Direct link"</
+Upload sur <strong>imgbb.com</strong> → copie le Direct link → colle ici
 </p>
 {form.imageUrl ? (
 <img
