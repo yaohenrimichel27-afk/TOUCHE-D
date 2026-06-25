@@ -6,7 +6,9 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
-  where
+  where,
+  doc,
+  runTransaction
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../lib/AuthContext";
@@ -22,10 +24,12 @@ import {
   ChefHat,
   X,
   ArrowLeft,
-  Banknote
+  Banknote,
+  AlertTriangle
 } from "lucide-react";
 
 const CATEGORIES = ["Tous", "Plats", "Boissons", "Extras"];
+const SEUIL_ALERTE = 5;
 
 const PAYMENT_METHODS = [
   { id: "especes", label: "Especes", type: "icon" },
@@ -48,6 +52,10 @@ const getEmoji = (category) => {
   if (category === "Extras") return "🍟";
   return "🍽️";
 };
+
+const hasStockTracking = (p) => p.stock !== undefined && p.stock !== null;
+const isOutOfStock = (p) => hasStockTracking(p) && p.stock <= 0;
+const isLowStock = (p) => hasStockTracking(p) && p.stock > 0 && p.stock <= SEUIL_ALERTE;
 
 const ProductThumb = ({ product, size = 90 }) => {
   const [failed, setFailed] = useState(false);
@@ -143,8 +151,19 @@ export default function POS() {
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   const addToCart = (product) => {
+    if (isOutOfStock(product)) {
+      toast(product.name + " est en rupture de stock", "error");
+      return;
+    }
     setCart((prev) => {
       const ex = prev.find((i) => i.id === product.id);
+      const currentQtyInCart = ex ? ex.qty : 0;
+
+      if (hasStockTracking(product) && currentQtyInCart + 1 > product.stock) {
+        toast("Stock insuffisant pour " + product.name, "error");
+        return prev;
+      }
+
       if (ex) {
         return prev.map((i) =>
           i.id === product.id ? { ...i, qty: i.qty + 1 } : i
@@ -157,7 +176,15 @@ export default function POS() {
   const updateQty = (id, delta) => {
     setCart((prev) =>
       prev
-        .map((i) => (i.id === id ? { ...i, qty: i.qty + delta } : i))
+        .map((i) => {
+          if (i.id !== id) return i;
+          const newQty = i.qty + delta;
+          if (delta > 0 && hasStockTracking(i) && newQty > i.stock) {
+            toast("Stock insuffisant", "error");
+            return i;
+          }
+          return { ...i, qty: newQty };
+        })
         .filter((i) => i.qty > 0)
     );
   };
@@ -176,6 +203,20 @@ export default function POS() {
     if (!paymentMethod) return toast("Choisis un mode de paiement", "error");
     setLoading(true);
     try {
+      // Decremente le stock pour chaque produit concerne (transaction securisee)
+      for (const item of cart) {
+        if (hasStockTracking(item)) {
+          const productRef = doc(db, "products", item.id);
+          await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(productRef);
+            if (!snap.exists()) return;
+            const currentStock = snap.data().stock || 0;
+            const newStock = Math.max(0, currentStock - item.qty);
+            transaction.update(productRef, { stock: newStock });
+          });
+        }
+      }
+
       await addDoc(collection(db, "orders"), {
         timestamp: serverTimestamp(),
         total: cartTotal,
@@ -202,7 +243,6 @@ export default function POS() {
     }
   };
 
-  /* ── MODAL PAIEMENT ── */
   if (showPayment) {
     return (
       <div
@@ -236,10 +276,7 @@ export default function POS() {
             }}
           >
             <h2 style={{ fontWeight: 800, fontSize: 17 }}>Mode de paiement</h2>
-            <button
-              className="btn btn-icon btn-secondary"
-              onClick={() => setShowPayment(false)}
-            >
+            <button className="btn btn-icon btn-secondary" onClick={() => setShowPayment(false)}>
               <X size={18} />
             </button>
           </div>
@@ -255,9 +292,7 @@ export default function POS() {
               alignItems: "center"
             }}
           >
-            <span style={{ fontSize: 13, color: "var(--gray-700)" }}>
-              Total a payer
-            </span>
+            <span style={{ fontSize: 13, color: "var(--gray-700)" }}>Total a payer</span>
             <span style={{ fontWeight: 800, fontSize: 19, color: "var(--brand)" }}>
               {cartTotal.toLocaleString("fr-FR")} FCFA
             </span>
@@ -276,9 +311,7 @@ export default function POS() {
                     gap: 14,
                     padding: "14px 16px",
                     borderRadius: 14,
-                    border: active
-                      ? "2.5px solid var(--brand)"
-                      : "2px solid var(--gray-100)",
+                    border: active ? "2.5px solid var(--brand)" : "2px solid var(--gray-100)",
                     background: active ? "var(--brand-pale)" : "white",
                     cursor: "pointer",
                     transition: "all 0.15s"
@@ -324,9 +357,7 @@ export default function POS() {
                       width: 22,
                       height: 22,
                       borderRadius: "50%",
-                      border: active
-                        ? "none"
-                        : "2px solid var(--gray-200)",
+                      border: active ? "none" : "2px solid var(--gray-200)",
                       background: active ? "var(--brand)" : "transparent",
                       display: "flex",
                       alignItems: "center",
@@ -346,18 +377,13 @@ export default function POS() {
             onClick={validateOrder}
             disabled={loading || !paymentMethod}
           >
-            {loading ? (
-              <span className="loader" />
-            ) : (
-              <><CheckCircle size={19} /> Confirmer la commande</>
-            )}
+            {loading ? <span className="loader" /> : <><CheckCircle size={19} /> Confirmer la commande</>}
           </button>
         </div>
       </div>
     );
   }
 
-  /* ── PANIER ── */
   if (showCart) {
     return (
       <div
@@ -564,7 +590,6 @@ export default function POS() {
     );
   }
 
-  /* ── PRODUITS ── */
   return (
     <div
       style={{
@@ -697,26 +722,31 @@ export default function POS() {
       >
         {filtered.map((product) => {
           const inCart = cart.find((i) => i.id === product.id);
+          const outOfStock = isOutOfStock(product);
+          const lowStock = isLowStock(product);
+
           return (
             <button
               key={product.id}
               onClick={() => addToCart(product)}
+              disabled={outOfStock}
               style={{
                 background: "var(--white)",
                 border: inCart ? "2px solid var(--brand)" : "2px solid transparent",
                 borderRadius: 14,
                 padding: 0,
-                cursor: "pointer",
+                cursor: outOfStock ? "not-allowed" : "pointer",
                 textAlign: "left",
                 boxShadow: inCart ? "0 3px 14px rgba(200,75,15,0.18)" : "var(--shadow)",
                 transition: "all 0.12s",
                 overflow: "hidden",
                 display: "flex",
                 flexDirection: "column",
-                position: "relative"
+                position: "relative",
+                opacity: outOfStock ? 0.55 : 1
               }}
             >
-              {inCart && (
+              {inCart && !outOfStock && (
                 <div
                   style={{
                     position: "absolute",
@@ -740,7 +770,35 @@ export default function POS() {
                 </div>
               )}
 
-              <ProductThumb product={product} size={90} />
+              <div style={{ position: "relative" }}>
+                <ProductThumb product={product} size={90} />
+                {outOfStock && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      background: "rgba(0,0,0,0.45)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}
+                  >
+                    <span
+                      style={{
+                        background: "#DC2626",
+                        color: "white",
+                        fontSize: 10,
+                        fontWeight: 800,
+                        padding: "4px 10px",
+                        borderRadius: 20,
+                        textAlign: "center"
+                      }}
+                    >
+                      RUPTURE
+                    </span>
+                  </div>
+                )}
+              </div>
 
               <div style={{ padding: "9px 10px 10px" }}>
                 <div
@@ -757,23 +815,42 @@ export default function POS() {
                 >
                   {product.name}
                 </div>
+
+                {lowStock && !outOfStock && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3,
+                      marginBottom: 5,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "#92400E"
+                    }}
+                  >
+                    <AlertTriangle size={10} /> Plus que {product.stock}
+                  </div>
+                )}
+
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand)" }}>
                     {product.price.toLocaleString("fr-FR")} F
                   </span>
-                  <div
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: "50%",
-                      background: inCart ? "var(--brand)" : "var(--gray-100)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center"
-                    }}
-                  >
-                    <Plus size={13} color={inCart ? "white" : "var(--gray-500)"} />
-                  </div>
+                  {!outOfStock && (
+                    <div
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: "50%",
+                        background: inCart ? "var(--brand)" : "var(--gray-100)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}
+                    >
+                      <Plus size={13} color={inCart ? "white" : "var(--gray-500)"} />
+                    </div>
+                  )}
                 </div>
               </div>
             </button>
