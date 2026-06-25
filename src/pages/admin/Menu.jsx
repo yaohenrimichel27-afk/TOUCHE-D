@@ -18,16 +18,20 @@ import {
   X,
   Check,
   UtensilsCrossed,
-  Image
+  Image,
+  Package,
+  AlertTriangle
 } from "lucide-react";
 
 const CATEGORIES = ["Plats", "Boissons", "Extras"];
+const SEUIL_ALERTE = 5;
 const EMPTY = {
   name: "",
   price: "",
   category: "Plats",
   active: true,
-  imageUrl: ""
+  imageUrl: "",
+  stock: ""
 };
 
 const ProductImage = ({ p, size = 48 }) => {
@@ -50,11 +54,7 @@ const ProductImage = ({ p, size = 48 }) => {
     );
   }
   const emoji =
-    p.category === "Boissons"
-      ? "🥤"
-      : p.category === "Extras"
-      ? "🍟"
-      : "🍽️";
+    p.category === "Boissons" ? "🥤" : p.category === "Extras" ? "🍟" : "🍽️";
   return (
     <div
       style={{
@@ -74,6 +74,41 @@ const ProductImage = ({ p, size = 48 }) => {
   );
 };
 
+const StockBadge = ({ stock }) => {
+  if (stock === undefined || stock === null) {
+    return (
+      <span className="badge" style={{ background: "var(--gray-100)", color: "var(--gray-500)" }}>
+        Stock non defini
+      </span>
+    );
+  }
+  if (stock <= 0) {
+    return (
+      <span
+        className="badge"
+        style={{ background: "#FEE2E2", color: "#B91C1C", display: "flex", alignItems: "center", gap: 4 }}
+      >
+        <AlertTriangle size={11} /> Rupture de stock
+      </span>
+    );
+  }
+  if (stock <= SEUIL_ALERTE) {
+    return (
+      <span
+        className="badge"
+        style={{ background: "#FEF3C7", color: "#92400E", display: "flex", alignItems: "center", gap: 4 }}
+      >
+        <AlertTriangle size={11} /> Plus que {stock}
+      </span>
+    );
+  }
+  return (
+    <span className="badge badge-success">
+      {stock} en stock
+    </span>
+  );
+};
+
 export default function Menu() {
   const toast = useToast();
   const [products, setProducts] = useState([]);
@@ -82,16 +117,13 @@ export default function Menu() {
   const [form, setForm] = useState(EMPTY);
   const [loading, setLoading] = useState(false);
   const [filterCat, setFilterCat] = useState("Tous");
+  const [stockEdit, setStockEdit] = useState(null);
+  const [stockValue, setStockValue] = useState("");
 
   useEffect(() => {
-    const q = query(
-      collection(db, "products"),
-      orderBy("category")
-    );
+    const q = query(collection(db, "products"), orderBy("category"));
     return onSnapshot(q, (snap) => {
-      setProducts(
-        snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      );
+      setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
   }, []);
 
@@ -107,7 +139,8 @@ export default function Menu() {
       price: String(p.price),
       category: p.category,
       active: p.active,
-      imageUrl: p.imageUrl || ""
+      imageUrl: p.imageUrl || "",
+      stock: p.stock !== undefined && p.stock !== null ? String(p.stock) : ""
     });
     setEditing(p.id);
     setShowForm(true);
@@ -132,6 +165,10 @@ export default function Menu() {
         active: form.active,
         imageUrl: form.imageUrl.trim()
       };
+      if (form.stock !== "") {
+        const stockNum = parseInt(form.stock);
+        data.stock = isNaN(stockNum) ? 0 : stockNum;
+      }
       if (editing) {
         await updateDoc(doc(db, "products", editing), data);
         toast("Produit modifie ✓", "success");
@@ -148,9 +185,7 @@ export default function Menu() {
   };
 
   const toggleActive = async (p) => {
-    await updateDoc(doc(db, "products", p.id), {
-      active: !p.active
-    });
+    await updateDoc(doc(db, "products", p.id), { active: !p.active });
     toast(p.active ? "Desactive" : "Active", "info");
   };
 
@@ -160,18 +195,32 @@ export default function Menu() {
     toast("Produit supprime", "info");
   };
 
+  const openStockEdit = (p) => {
+    setStockEdit(p.id);
+    setStockValue(p.stock !== undefined && p.stock !== null ? String(p.stock) : "0");
+  };
+
+  const saveStock = async (p) => {
+    const val = parseInt(stockValue);
+    if (isNaN(val) || val < 0) return toast("Stock invalide", "error");
+    await updateDoc(doc(db, "products", p.id), { stock: val });
+    toast("Stock mis a jour : " + val, "success");
+    setStockEdit(null);
+  };
+
+  const quickAdjust = async (p, delta) => {
+    const current = p.stock || 0;
+    const newVal = Math.max(0, current + delta);
+    await updateDoc(doc(db, "products", p.id), { stock: newVal });
+  };
+
   const filtered =
-    filterCat === "Tous"
-      ? products
-      : products.filter((p) => p.category === filterCat);
+    filterCat === "Tous" ? products : products.filter((p) => p.category === filterCat);
 
   const cats = ["Tous", ...CATEGORIES];
 
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: 20 }}
-      className="fade-in"
-    >
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }} className="fade-in">
       <div
         style={{
           display: "flex",
@@ -205,10 +254,8 @@ export default function Menu() {
               fontSize: 13,
               cursor: "pointer",
               whiteSpace: "nowrap",
-              background:
-                filterCat === c ? "var(--brand)" : "var(--white)",
-              color:
-                filterCat === c ? "white" : "var(--gray-700)",
+              background: filterCat === c ? "var(--brand)" : "var(--white)",
+              color: filterCat === c ? "white" : "var(--gray-700)",
               boxShadow: "var(--shadow)"
             }}
           >
@@ -217,10 +264,7 @@ export default function Menu() {
         ))}
       </div>
 
-      <div
-        className="card"
-        style={{ padding: 0, overflow: "hidden" }}
-      >
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         {filtered.length === 0 ? (
           <div className="empty-state" style={{ padding: 48 }}>
             <UtensilsCrossed size={32} />
@@ -235,113 +279,136 @@ export default function Menu() {
               key={p.id}
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 12,
+                flexDirection: "column",
+                gap: 10,
                 padding: "12px 16px",
-                borderBottom:
-                  i < filtered.length - 1
-                    ? "1px solid var(--gray-100)"
-                    : "none",
+                borderBottom: i < filtered.length - 1 ? "1px solid var(--gray-100)" : "none",
                 background: i % 2 === 0 ? "white" : "var(--cream)"
               }}
             >
-              <ProductImage p={p} size={48} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: 14,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis"
-                  }}
-                >
-                  {p.name}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginTop: 4,
-                    flexWrap: "wrap"
-                  }}
-                >
-                  <span
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <ProductImage p={p} size={48} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
                     style={{
                       fontWeight: 700,
-                      color: "var(--brand)",
-                      fontSize: 13
+                      fontSize: 14,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis"
                     }}
                   >
-                    {p.price.toLocaleString("fr-FR")} FCFA
-                  </span>
-                  <span
-                    className={
-                      p.category === "Boissons"
-                        ? "badge badge-brand"
-                        : p.category === "Extras"
-                        ? "badge badge-warning"
-                        : "badge badge-success"
-                    }
-                  >
-                    {p.category}
-                  </span>
-                  {p.imageUrl && (
-                    <span
-                      className="badge"
-                      style={{
-                        background: "#DCFCE7",
-                        color: "#15803D",
-                        fontSize: 10
-                      }}
-                    >
-                      Photo
+                    {p.name}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, color: "var(--brand)", fontSize: 13 }}>
+                      {p.price.toLocaleString("fr-FR")} FCFA
                     </span>
-                  )}
+                    <span
+                      className={
+                        p.category === "Boissons"
+                          ? "badge badge-brand"
+                          : p.category === "Extras"
+                          ? "badge badge-warning"
+                          : "badge badge-success"
+                      }
+                    >
+                      {p.category}
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => toggleActive(p)}
+                    className={p.active ? "badge badge-success" : "badge badge-danger"}
+                    style={{ cursor: "pointer", border: "none", padding: "4px 10px" }}
+                  >
+                    {p.active ? "Actif" : "Inactif"}
+                  </button>
+                  <button
+                    className="btn btn-icon btn-secondary"
+                    style={{ padding: 8 }}
+                    onClick={() => openEdit(p)}
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    className="btn btn-icon"
+                    style={{ padding: 8, background: "#FEE2E2", color: "var(--danger)" }}
+                    onClick={() => remove(p)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
+
+              {/* Ligne stock */}
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 6,
-                  flexShrink: 0
+                  gap: 8,
+                  background: "white",
+                  borderRadius: 10,
+                  padding: "8px 10px",
+                  border: "1px solid var(--gray-100)"
                 }}
               >
-                <button
-                  onClick={() => toggleActive(p)}
-                  className={
-                    p.active
-                      ? "badge badge-success"
-                      : "badge badge-danger"
-                  }
-                  style={{
-                    cursor: "pointer",
-                    border: "none",
-                    padding: "4px 10px"
-                  }}
-                >
-                  {p.active ? "Actif" : "Inactif"}
-                </button>
-                <button
-                  className="btn btn-icon btn-secondary"
-                  style={{ padding: 8 }}
-                  onClick={() => openEdit(p)}
-                >
-                  <Pencil size={14} />
-                </button>
-                <button
-                  className="btn btn-icon"
-                  style={{
-                    padding: 8,
-                    background: "#FEE2E2",
-                    color: "var(--danger)"
-                  }}
-                  onClick={() => remove(p)}
-                >
-                  <Trash2 size={14} />
-                </button>
+                <Package size={14} color="var(--gray-500)" />
+
+                {stockEdit === p.id ? (
+                  <>
+                    <input
+                      className="input"
+                      type="number"
+                      value={stockValue}
+                      onChange={(e) => setStockValue(e.target.value)}
+                      style={{ flex: 1, padding: "6px 10px", fontSize: 14 }}
+                      inputMode="numeric"
+                      autoFocus
+                    />
+                    <button
+                      className="btn btn-icon"
+                      style={{ background: "var(--success)", color: "white", padding: 8 }}
+                      onClick={() => saveStock(p)}
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      className="btn btn-icon btn-secondary"
+                      style={{ padding: 8 }}
+                      onClick={() => setStockEdit(null)}
+                    >
+                      <X size={14} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ flex: 1 }}>
+                      <StockBadge stock={p.stock} />
+                    </div>
+                    <button
+                      className="btn btn-icon btn-secondary"
+                      style={{ padding: 7 }}
+                      onClick={() => quickAdjust(p, -1)}
+                    >
+                      <span style={{ fontWeight: 800, fontSize: 14, width: 12, display: "inline-block", textAlign: "center" }}>-</span>
+                    </button>
+                    <button
+                      className="btn btn-icon btn-secondary"
+                      style={{ padding: 7 }}
+                      onClick={() => quickAdjust(p, 1)}
+                    >
+                      <span style={{ fontWeight: 800, fontSize: 14, width: 12, display: "inline-block", textAlign: "center" }}>+</span>
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => openStockEdit(p)}
+                    >
+                      Modifier
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))
@@ -367,8 +434,7 @@ export default function Menu() {
               width: "100%",
               maxWidth: 480,
               padding: 24,
-              paddingBottom:
-                "calc(24px + env(safe-area-inset-bottom))",
+              paddingBottom: "calc(24px + env(safe-area-inset-bottom))",
               animation: "slideUp 0.3s ease",
               maxHeight: "92vh",
               overflowY: "auto"
@@ -385,33 +451,21 @@ export default function Menu() {
               <h2 style={{ fontWeight: 800, fontSize: 18 }}>
                 {editing ? "Modifier" : "Ajouter"} un produit
               </h2>
-              <button
-                className="btn btn-icon btn-secondary"
-                onClick={closeForm}
-              >
+              <button className="btn btn-icon btn-secondary" onClick={closeForm}>
                 <X size={18} />
               </button>
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 14
-              }}
-            >
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
                 <label>Nom du produit</label>
                 <input
                   className="input"
                   placeholder="Ex: Alloco Poulet"
                   value={form.name}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, name: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 />
               </div>
-
               <div>
                 <label>Prix en FCFA</label>
                 <input
@@ -419,24 +473,16 @@ export default function Menu() {
                   type="number"
                   placeholder="3500"
                   value={form.price}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, price: e.target.value }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
                   inputMode="numeric"
                 />
               </div>
-
               <div>
                 <label>Categorie</label>
                 <select
                   className="select"
                   value={form.category}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      category: e.target.value
-                    }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                 >
                   {CATEGORIES.map((c) => (
                     <option key={c} value={c}>
@@ -447,31 +493,35 @@ export default function Menu() {
               </div>
 
               <div>
-                <label>Lien photo (optionnel)</label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Package size={14} color="var(--brand)" /> Stock disponible
+                </label>
                 <input
                   className="input"
-                  placeholder="https://i.ibb.co/..."
+                  type="number"
+                  placeholder="Ex: 20 (laisser vide si non gere)"
+                  value={form.stock}
+                  onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
+                  inputMode="numeric"
+                />
+                <p style={{ fontSize: 11, color: "var(--gray-500)", marginTop: 6 }}>
+                  Alerte automatique a 5 articles restants
+                </p>
+              </div>
+
+              <div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Image size={14} color="var(--brand)" /> Lien photo (optionnel)
+                </label>
+                <input
+                  className="input"
+                  placeholder="https://res.cloudinary.com/..."
                   value={form.imageUrl}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      imageUrl: e.target.value
-                    }))
-                  }
+                  onChange={(e) => setForm((f) => ({ ...f, imageUrl: e.target.value }))}
                   autoCapitalize="none"
                   autoCorrect="off"
                   style={{ fontSize: 13 }}
                 />
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: "var(--gray-500)",
-                    marginTop: 6,
-                    lineHeight: 1.5
-                  }}
-                >
-                  Upload sur imgbb.com puis colle le lien ici
-                </p>
                 {form.imageUrl ? (
                   <img
                     src={form.imageUrl}
@@ -508,26 +558,16 @@ export default function Menu() {
                 )}
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12
-                }}
-              >
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <label style={{ margin: 0 }}>Disponible</label>
                 <button
-                  onClick={() =>
-                    setForm((f) => ({ ...f, active: !f.active }))
-                  }
+                  onClick={() => setForm((f) => ({ ...f, active: !f.active }))}
                   style={{
                     width: 44,
                     height: 24,
                     borderRadius: 12,
                     border: "none",
-                    background: form.active
-                      ? "var(--success)"
-                      : "var(--gray-300)",
+                    background: form.active ? "var(--success)" : "var(--gray-300)",
                     cursor: "pointer",
                     position: "relative",
                     transition: "background 0.2s"
@@ -547,14 +587,7 @@ export default function Menu() {
                     }}
                   />
                 </button>
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: form.active
-                      ? "var(--success)"
-                      : "var(--gray-500)"
-                  }}
-                >
+                <span style={{ fontSize: 13, color: form.active ? "var(--success)" : "var(--gray-500)" }}>
                   {form.active ? "Actif" : "Inactif"}
                 </span>
               </div>

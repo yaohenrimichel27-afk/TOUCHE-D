@@ -16,6 +16,7 @@ import {
   MessageCircle,
   Target,
   Banknote,
+  Receipt,
   Wallet
 } from "lucide-react";
 import {
@@ -37,11 +38,7 @@ import { useToast } from "../../components/shared/Toast";
 const PERIODS = ["Aujourd'hui", "Semaine", "Mois"];
 
 const PAYMENT_INFO = {
-  especes: {
-    label: "Especes",
-    color: "#16A34A",
-    type: "icon"
-  },
+  especes: { label: "Especes", color: "#16A34A", type: "icon" },
   orange_money: {
     label: "Orange Money",
     color: "#FF7900",
@@ -60,6 +57,7 @@ export default function Dashboard() {
   const toast = useToast();
   const [period, setPeriod] = useState("Aujourd'hui");
   const [orders, setOrders] = useState([]);
+  const [depenses, setDepenses] = useState([]);
   const [showWA, setShowWA] = useState(false);
   const [objectif, setObjectif] = useState(100000);
   const objectifNotifie = useRef(false);
@@ -84,14 +82,29 @@ export default function Dashboard() {
   useEffect(() => {
     objectifNotifie.current = false;
     const start = Timestamp.fromDate(getStart());
-    const q = query(
+
+    const qOrders = query(
       collection(db, "orders"),
       where("timestamp", ">=", start),
       orderBy("timestamp", "desc")
     );
-    return onSnapshot(q, (snap) => {
+    const unsubOrders = onSnapshot(qOrders, (snap) => {
       setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+
+    const qDepenses = query(
+      collection(db, "depenses"),
+      where("timestamp", ">=", start),
+      orderBy("timestamp", "desc")
+    );
+    const unsubDepenses = onSnapshot(qDepenses, (snap) => {
+      setDepenses(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => {
+      unsubOrders();
+      unsubDepenses();
+    };
   }, [period]);
 
   const stats = useMemo(() => {
@@ -118,15 +131,20 @@ export default function Dashboard() {
       .slice(0, 5)
       .map(([name, qty]) => ({ name, qty }));
 
+    const totalDepenses = depenses.reduce((s, d) => s + (d.montant || 0), 0);
+    const benefice = totalVentes - totalDepenses;
+
     return {
       totalVentes,
       nbCommandes,
       platsVendus,
       boissonsVendues,
       topProduits,
-      paiementMap
+      paiementMap,
+      totalDepenses,
+      benefice
     };
-  }, [orders]);
+  }, [orders, depenses]);
 
   useEffect(() => {
     if (
@@ -317,11 +335,54 @@ export default function Dashboard() {
         <StatCard label="Boissons" value={stats.boissonsVendues} icon={Droplets} color="#0891B2" />
       </div>
 
-      {/* Répartition par mode de paiement */}
-      <div className="card" style={{ padding: 14 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>
-          💳 Ventes par mode de paiement
+      {/* BILAN COMPTABLE */}
+      <div
+        className="card"
+        style={{
+          padding: 16,
+          background: "linear-gradient(135deg, var(--dark) 0%, #2D1A0E 100%)",
+          color: "white"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <Wallet size={17} />
+          <span style={{ fontWeight: 700, fontSize: 14 }}>Bilan comptable</span>
         </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Ventes</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: "#86EFAC" }}>
+              +{stats.totalVentes.toLocaleString("fr-FR")} FCFA
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>Depenses</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: "#FCA5A5" }}>
+              -{stats.totalDepenses.toLocaleString("fr-FR")} FCFA
+            </span>
+          </div>
+
+          <div style={{ height: 1, background: "rgba(255,255,255,0.15)", margin: "4px 0" }} />
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>Benefice net</span>
+            <span
+              style={{
+                fontWeight: 800,
+                fontSize: 20,
+                color: stats.benefice >= 0 ? "#86EFAC" : "#FCA5A5"
+              }}
+            >
+              {stats.benefice >= 0 ? "+" : ""}
+              {stats.benefice.toLocaleString("fr-FR")} FCFA
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💳 Ventes par mode de paiement</div>
         {totalPaiements === 0 ? (
           <div className="empty-state" style={{ padding: "16px 0" }}>
             <p style={{ fontSize: 12 }}>Aucune vente</p>
@@ -364,14 +425,7 @@ export default function Dashboard() {
                         {montant.toLocaleString("fr-FR")} F
                       </span>
                     </div>
-                    <div
-                      style={{
-                        background: "var(--gray-100)",
-                        borderRadius: 10,
-                        height: 6,
-                        overflow: "hidden"
-                      }}
-                    >
+                    <div style={{ background: "var(--gray-100)", borderRadius: 10, height: 6, overflow: "hidden" }}>
                       <div
                         style={{
                           height: "100%",
@@ -471,7 +525,10 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="card" style={{ padding: 14, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+        <div
+          className="card"
+          style={{ padding: 14, display: "flex", flexDirection: "column", justifyContent: "space-between" }}
+        >
           <div>
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📤 Rapport</div>
             <div style={{ fontSize: 11, color: "var(--gray-500)", lineHeight: 1.7 }}>
