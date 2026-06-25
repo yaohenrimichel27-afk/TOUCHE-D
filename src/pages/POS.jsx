@@ -21,12 +21,27 @@ import {
   LogOut,
   ChefHat,
   X,
-  ArrowLeft
+  ArrowLeft,
+  Banknote
 } from "lucide-react";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
 
 const CATEGORIES = ["Tous", "Plats", "Boissons", "Extras"];
+
+const PAYMENT_METHODS = [
+  { id: "especes", label: "Especes", type: "icon" },
+  {
+    id: "orange_money",
+    label: "Orange Money",
+    type: "image",
+    url: "https://res.cloudinary.com/dhdvyuaoy/image/upload/v1782312905/IMG_3609_mwypnh.png"
+  },
+  {
+    id: "wave",
+    label: "Wave",
+    type: "image",
+    url: "https://res.cloudinary.com/dhdvyuaoy/image/upload/v1782312906/IMG_3610_ozhzqd.jpg"
+  }
+];
 
 const getEmoji = (category) => {
   if (category === "Boissons") return "🥤";
@@ -45,21 +60,12 @@ const ProductThumb = ({ product, size = 90 }) => {
           src={product.imageUrl}
           alt={product.name}
           crossOrigin="anonymous"
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            display: "block"
-          }}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           onError={() => setFailed(true)}
-          onLoad={(e) => {
-            e.target.style.opacity = "1";
-          }}
         />
       </div>
     );
   }
-
   return (
     <div
       style={{
@@ -80,27 +86,18 @@ const ProductThumb = ({ product, size = 90 }) => {
 const CartThumb = ({ item }) => {
   const [failed, setFailed] = useState(false);
   const hasImage = item.imageUrl && item.imageUrl.length > 5;
-
   if (hasImage && !failed) {
     return (
       <img
         src={item.imageUrl}
         alt={item.name}
         crossOrigin="anonymous"
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover"
-        }}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
         onError={() => setFailed(true)}
       />
     );
   }
-  return (
-    <span style={{ fontSize: 22 }}>
-      {getEmoji(item.category)}
-    </span>
-  );
+  return <span style={{ fontSize: 22 }}>{getEmoji(item.category)}</span>;
 };
 
 export default function POS() {
@@ -114,47 +111,35 @@ export default function POS() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [todayOrders, setTodayOrders] = useState(0);
   const [showCart, setShowCart] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState(null);
   const [lastTotal, setLastTotal] = useState(0);
 
   useEffect(() => {
-    const q = query(
-      collection(db, "products"),
-      orderBy("name")
-    );
+    const q = query(collection(db, "products"), orderBy("name"));
     return onSnapshot(q, (snap) => {
-      setProducts(
-        snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      );
+      setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
   }, []);
 
   useEffect(() => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const q = query(
-      collection(db, "orders"),
-      where("timestamp", ">=", start)
-    );
+    const q = query(collection(db, "orders"), where("timestamp", ">=", start));
     return onSnapshot(q, (snap) => setTodayOrders(snap.size));
   }, []);
 
   const filtered = useMemo(
     () =>
       products.filter((p) => {
-        const matchCat =
-          category === "Tous" || p.category === category;
-        const matchSearch = p.name
-          .toLowerCase()
-          .includes(search.toLowerCase());
+        const matchCat = category === "Tous" || p.category === category;
+        const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
         return matchCat && matchSearch;
       }),
     [products, category, search]
   );
 
-  const cartTotal = cart.reduce(
-    (s, i) => s + i.price * i.qty,
-    0
-  );
+  const cartTotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
   const addToCart = (product) => {
@@ -162,9 +147,7 @@ export default function POS() {
       const ex = prev.find((i) => i.id === product.id);
       if (ex) {
         return prev.map((i) =>
-          i.id === product.id
-            ? { ...i, qty: i.qty + 1 }
-            : i
+          i.id === product.id ? { ...i, qty: i.qty + 1 } : i
         );
       }
       return [...prev, { ...product, qty: 1 }];
@@ -174,9 +157,7 @@ export default function POS() {
   const updateQty = (id, delta) => {
     setCart((prev) =>
       prev
-        .map((i) =>
-          i.id === id ? { ...i, qty: i.qty + delta } : i
-        )
+        .map((i) => (i.id === id ? { ...i, qty: i.qty + delta } : i))
         .filter((i) => i.qty > 0)
     );
   };
@@ -185,14 +166,21 @@ export default function POS() {
     setCart((prev) => prev.filter((i) => i.id !== id));
   };
 
-  const validateOrder = async () => {
+  const openPaymentStep = () => {
     if (!cart.length) return toast("Panier vide", "error");
+    setPaymentMethod(null);
+    setShowPayment(true);
+  };
+
+  const validateOrder = async () => {
+    if (!paymentMethod) return toast("Choisis un mode de paiement", "error");
     setLoading(true);
     try {
       await addDoc(collection(db, "orders"), {
         timestamp: serverTimestamp(),
         total: cartTotal,
         createdByName: userData?.name || "Caissier",
+        paymentMethod: paymentMethod,
         items: cart.map((i) => ({
           id: i.id,
           name: i.name,
@@ -203,6 +191,7 @@ export default function POS() {
       });
       setLastTotal(cartTotal);
       setCart([]);
+      setShowPayment(false);
       setShowCart(false);
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 2200);
@@ -213,6 +202,162 @@ export default function POS() {
     }
   };
 
+  /* ── MODAL PAIEMENT ── */
+  if (showPayment) {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.55)",
+          zIndex: 10000,
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "center"
+        }}
+      >
+        <div
+          style={{
+            background: "white",
+            borderRadius: "20px 20px 0 0",
+            width: "100%",
+            maxWidth: 480,
+            padding: 22,
+            paddingBottom: "calc(22px + env(safe-area-inset-bottom))",
+            animation: "slideUp 0.3s ease"
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 18
+            }}
+          >
+            <h2 style={{ fontWeight: 800, fontSize: 17 }}>Mode de paiement</h2>
+            <button
+              className="btn btn-icon btn-secondary"
+              onClick={() => setShowPayment(false)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div
+            style={{
+              background: "var(--brand-pale)",
+              borderRadius: 12,
+              padding: "12px 16px",
+              marginBottom: 18,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}
+          >
+            <span style={{ fontSize: 13, color: "var(--gray-700)" }}>
+              Total a payer
+            </span>
+            <span style={{ fontWeight: 800, fontSize: 19, color: "var(--brand)" }}>
+              {cartTotal.toLocaleString("fr-FR")} FCFA
+            </span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {PAYMENT_METHODS.map((m) => {
+              const active = paymentMethod === m.id;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => setPaymentMethod(m.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: active
+                      ? "2.5px solid var(--brand)"
+                      : "2px solid var(--gray-100)",
+                    background: active ? "var(--brand-pale)" : "white",
+                    cursor: "pointer",
+                    transition: "all 0.15s"
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 11,
+                      overflow: "hidden",
+                      flexShrink: 0,
+                      background: "white",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: "1px solid var(--gray-100)"
+                    }}
+                  >
+                    {m.type === "icon" ? (
+                      <Banknote size={22} color="var(--success)" />
+                    ) : (
+                      <img
+                        src={m.url}
+                        alt={m.label}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    )}
+                  </div>
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 15,
+                      color: active ? "var(--brand)" : "var(--dark)",
+                      flex: 1,
+                      textAlign: "left"
+                    }}
+                  >
+                    {m.label}
+                  </span>
+                  <div
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      border: active
+                        ? "none"
+                        : "2px solid var(--gray-200)",
+                      background: active ? "var(--brand)" : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center"
+                    }}
+                  >
+                    {active && <CheckCircle size={16} color="white" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            className="btn btn-primary btn-lg"
+            style={{ width: "100%", marginTop: 20, fontSize: 16, padding: 16 }}
+            onClick={validateOrder}
+            disabled={loading || !paymentMethod}
+          >
+            {loading ? (
+              <span className="loader" />
+            ) : (
+              <><CheckCircle size={19} /> Confirmer la commande</>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── PANIER ── */
   if (showCart) {
     return (
       <div
@@ -251,16 +396,8 @@ export default function POS() {
           >
             <ArrowLeft size={18} />
           </button>
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: 16,
-              flex: 1,
-              color: "white"
-            }}
-          >
-            Panier · {cartCount} article
-            {cartCount > 1 ? "s" : ""}
+          <span style={{ fontWeight: 700, fontSize: 16, flex: 1, color: "white" }}>
+            Panier · {cartCount} article{cartCount > 1 ? "s" : ""}
           </span>
           {cart.length > 0 && (
             <button
@@ -291,16 +428,10 @@ export default function POS() {
           }}
         >
           {!cart.length ? (
-            <div
-              className="empty-state"
-              style={{ marginTop: 60 }}
-            >
+            <div className="empty-state" style={{ marginTop: 60 }}>
               <ShoppingCart size={44} />
               <p>Panier vide</p>
-              <button
-                className="btn btn-primary"
-                onClick={() => setShowCart(false)}
-              >
+              <button className="btn btn-primary" onClick={() => setShowCart(false)}>
                 Ajouter des plats
               </button>
             </div>
@@ -309,12 +440,7 @@ export default function POS() {
               <div
                 key={item.id}
                 className="card"
-                style={{
-                  padding: "12px 14px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10
-                }}
+                style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}
               >
                 <div
                   style={{
@@ -343,28 +469,11 @@ export default function POS() {
                   >
                     {item.name}
                   </div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: "var(--brand)",
-                      fontWeight: 700,
-                      marginTop: 2
-                    }}
-                  >
-                    {(item.price * item.qty).toLocaleString(
-                      "fr-FR"
-                    )}{" "}
-                    FCFA
+                  <div style={{ fontSize: 13, color: "var(--brand)", fontWeight: 700, marginTop: 2 }}>
+                    {(item.price * item.qty).toLocaleString("fr-FR")} FCFA
                   </div>
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    flexShrink: 0
-                  }}
-                >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                   <button
                     onClick={() => updateQty(item.id, -1)}
                     style={{
@@ -381,14 +490,7 @@ export default function POS() {
                   >
                     <Minus size={13} />
                   </button>
-                  <span
-                    style={{
-                      fontWeight: 800,
-                      fontSize: 15,
-                      minWidth: 20,
-                      textAlign: "center"
-                    }}
-                  >
+                  <span style={{ fontWeight: 800, fontSize: 15, minWidth: 20, textAlign: "center" }}>
                     {item.qty}
                   </span>
                   <button
@@ -432,66 +534,29 @@ export default function POS() {
             style={{
               background: "white",
               padding: "16px 14px",
-              paddingBottom:
-                "calc(16px + env(safe-area-inset-bottom))",
+              paddingBottom: "calc(16px + env(safe-area-inset-bottom))",
               borderTop: "1px solid var(--gray-100)",
               boxShadow: "0 -4px 20px rgba(0,0,0,0.06)"
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: 4
-              }}
-            >
-              <span
-                style={{ color: "var(--gray-500)", fontSize: 13 }}
-              >
-                Sous-total
-              </span>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ color: "var(--gray-500)", fontSize: 13 }}>Sous-total</span>
               <span style={{ fontWeight: 600, fontSize: 13 }}>
                 {cartTotal.toLocaleString("fr-FR")} FCFA
               </span>
             </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                marginBottom: 16
-              }}
-            >
-              <span style={{ fontWeight: 800, fontSize: 17 }}>
-                Total
-              </span>
-              <span
-                style={{
-                  fontWeight: 800,
-                  fontSize: 20,
-                  color: "var(--brand)"
-                }}
-              >
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+              <span style={{ fontWeight: 800, fontSize: 17 }}>Total</span>
+              <span style={{ fontWeight: 800, fontSize: 20, color: "var(--brand)" }}>
                 {cartTotal.toLocaleString("fr-FR")} FCFA
               </span>
             </div>
             <button
               className="btn btn-primary btn-lg"
-              style={{
-                width: "100%",
-                fontSize: 16,
-                padding: 16,
-                borderRadius: 14
-              }}
-              onClick={validateOrder}
-              disabled={loading}
+              style={{ width: "100%", fontSize: 16, padding: 16, borderRadius: 14 }}
+              onClick={openPaymentStep}
             >
-              {loading ? (
-                <span className="loader" />
-              ) : (
-                <>
-                  <CheckCircle size={19} /> Valider la commande
-                </>
-              )}
+              <CheckCircle size={19} /> Continuer vers paiement
             </button>
           </div>
         )}
@@ -499,6 +564,7 @@ export default function POS() {
     );
   }
 
+  /* ── PRODUITS ── */
   return (
     <div
       style={{
@@ -522,13 +588,7 @@ export default function POS() {
           zIndex: 100
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div
             style={{
               width: 32,
@@ -555,13 +615,7 @@ export default function POS() {
             >
               La Touche D
             </div>
-            <div
-              style={{
-                fontSize: 10,
-                color: "rgba(255,255,255,0.45)",
-                lineHeight: 1
-              }}
-            >
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", lineHeight: 1 }}>
               {userData?.name} · {todayOrders} cmd
             </div>
           </div>
@@ -596,11 +650,7 @@ export default function POS() {
           />
           <input
             className="input"
-            style={{
-              paddingLeft: 34,
-              fontSize: 16,
-              padding: "10px 12px 10px 34px"
-            }}
+            style={{ paddingLeft: 34, fontSize: 16, padding: "10px 12px 10px 34px" }}
             placeholder="Rechercher..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -608,10 +658,7 @@ export default function POS() {
         </div>
       </div>
 
-      <div
-        className="scroll-tabs"
-        style={{ padding: "8px 12px" }}
-      >
+      <div className="scroll-tabs" style={{ padding: "8px 12px" }}>
         {CATEGORIES.map((c) => (
           <button
             key={c}
@@ -625,16 +672,9 @@ export default function POS() {
               cursor: "pointer",
               whiteSpace: "nowrap",
               flexShrink: 0,
-              background:
-                category === c
-                  ? "var(--brand)"
-                  : "var(--white)",
-              color:
-                category === c ? "white" : "var(--gray-700)",
-              boxShadow:
-                category === c
-                  ? "0 2px 8px rgba(200,75,15,0.25)"
-                  : "var(--shadow)",
+              background: category === c ? "var(--brand)" : "var(--white)",
+              color: category === c ? "white" : "var(--gray-700)",
+              boxShadow: category === c ? "0 2px 8px rgba(200,75,15,0.25)" : "var(--shadow)",
               transition: "all 0.15s"
             }}
           >
@@ -663,16 +703,12 @@ export default function POS() {
               onClick={() => addToCart(product)}
               style={{
                 background: "var(--white)",
-                border: inCart
-                  ? "2px solid var(--brand)"
-                  : "2px solid transparent",
+                border: inCart ? "2px solid var(--brand)" : "2px solid transparent",
                 borderRadius: 14,
                 padding: 0,
                 cursor: "pointer",
                 textAlign: "left",
-                boxShadow: inCart
-                  ? "0 3px 14px rgba(200,75,15,0.18)"
-                  : "var(--shadow)",
+                boxShadow: inCart ? "0 3px 14px rgba(200,75,15,0.18)" : "var(--shadow)",
                 transition: "all 0.12s",
                 overflow: "hidden",
                 display: "flex",
@@ -697,8 +733,7 @@ export default function POS() {
                     justifyContent: "center",
                     fontSize: 11,
                     fontWeight: 800,
-                    boxShadow:
-                      "0 2px 6px rgba(200,75,15,0.4)"
+                    boxShadow: "0 2px 6px rgba(200,75,15,0.4)"
                   }}
                 >
                   {inCart.qty}
@@ -722,20 +757,8 @@ export default function POS() {
                 >
                   {product.name}
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between"
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 800,
-                      color: "var(--brand)"
-                    }}
-                  >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand)" }}>
                     {product.price.toLocaleString("fr-FR")} F
                   </span>
                   <div
@@ -743,20 +766,13 @@ export default function POS() {
                       width: 24,
                       height: 24,
                       borderRadius: "50%",
-                      background: inCart
-                        ? "var(--brand)"
-                        : "var(--gray-100)",
+                      background: inCart ? "var(--brand)" : "var(--gray-100)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center"
                     }}
                   >
-                    <Plus
-                      size={13}
-                      color={
-                        inCart ? "white" : "var(--gray-500)"
-                      }
-                    />
+                    <Plus size={13} color={inCart ? "white" : "var(--gray-500)"} />
                   </div>
                 </div>
               </div>
@@ -764,10 +780,7 @@ export default function POS() {
           );
         })}
         {!filtered.length && (
-          <div
-            style={{ gridColumn: "1/-1" }}
-            className="empty-state"
-          >
+          <div style={{ gridColumn: "1/-1" }} className="empty-state">
             <p>Aucun produit</p>
           </div>
         )}
@@ -781,8 +794,7 @@ export default function POS() {
             left: 0,
             right: 0,
             padding: "10px 14px",
-            paddingBottom:
-              "calc(10px + env(safe-area-inset-bottom))",
+            paddingBottom: "calc(10px + env(safe-area-inset-bottom))",
             background: "white",
             boxShadow: "0 -3px 16px rgba(0,0,0,0.09)",
             zIndex: 200
@@ -819,9 +831,7 @@ export default function POS() {
               {cartCount}
             </div>
             <span>Voir le panier</span>
-            <span style={{ fontWeight: 800 }}>
-              {cartTotal.toLocaleString("fr-FR")} F
-            </span>
+            <span style={{ fontWeight: 800 }}>{cartTotal.toLocaleString("fr-FR")} F</span>
           </button>
         </div>
       )}
@@ -841,23 +851,10 @@ export default function POS() {
           }}
         >
           <CheckCircle size={80} color="white" strokeWidth={1.5} />
-          <div
-            style={{
-              color: "white",
-              fontSize: 22,
-              fontWeight: 800,
-              marginTop: 18
-            }}
-          >
+          <div style={{ color: "white", fontSize: 22, fontWeight: 800, marginTop: 18 }}>
             Commande validee !
           </div>
-          <div
-            style={{
-              color: "rgba(255,255,255,0.75)",
-              fontSize: 15,
-              marginTop: 6
-            }}
-          >
+          <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 15, marginTop: 6 }}>
             {lastTotal.toLocaleString("fr-FR")} FCFA
           </div>
         </div>
