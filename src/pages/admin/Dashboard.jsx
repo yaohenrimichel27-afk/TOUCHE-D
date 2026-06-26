@@ -17,7 +17,9 @@ import {
   Target,
   Banknote,
   Receipt,
-  Wallet
+  Wallet,
+  AlertTriangle,
+  PackageX
 } from "lucide-react";
 import {
   LineChart,
@@ -36,6 +38,7 @@ import { getObjectif, notifierObjectifAtteint, ecouterNotifications } from "../.
 import { useToast } from "../../components/shared/Toast";
 
 const PERIODS = ["Aujourd'hui", "Semaine", "Mois"];
+const SEUIL_ALERTE = 5;
 
 const PAYMENT_INFO = {
   especes: { label: "Especes", color: "#16A34A", type: "icon" },
@@ -58,9 +61,18 @@ export default function Dashboard() {
   const [period, setPeriod] = useState("Aujourd'hui");
   const [orders, setOrders] = useState([]);
   const [depenses, setDepenses] = useState([]);
+  const [products, setProducts] = useState([]);
   const [showWA, setShowWA] = useState(false);
+  const [showStockWA, setShowStockWA] = useState(false);
   const [objectif, setObjectif] = useState(100000);
   const objectifNotifie = useRef(false);
+
+  useEffect(() => {
+    const q = query(collection(db, "products"), orderBy("name"));
+    return onSnapshot(q, (snap) => {
+      setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+  }, []);
 
   useEffect(() => {
     getObjectif().then(setObjectif);
@@ -218,7 +230,43 @@ export default function Dashboard() {
     </div>
   );
 
-  const rapportData = {
+  const stockAlerts = useMemo(() => {
+    const hasStock = (p) => p.stock !== undefined && p.stock !== null;
+    const ruptures = products.filter((p) => hasStock(p) && p.stock <= 0);
+    const bientotRupture = products.filter(
+      (p) => hasStock(p) && p.stock > 0 && p.stock <= SEUIL_ALERTE
+    );
+    return { ruptures, bientotRupture };
+  }, [products]);
+
+  const buildStockMessage = () => {
+    const lignes = [];
+    if (stockAlerts.ruptures.length) {
+      lignes.push("🔴 *EN RUPTURE :*");
+      stockAlerts.ruptures.forEach((p) => lignes.push("  - " + p.name));
+    }
+    if (stockAlerts.bientotRupture.length) {
+      if (lignes.length) lignes.push("");
+      lignes.push("🟠 *STOCK FAIBLE :*");
+      stockAlerts.bientotRupture.forEach((p) =>
+        lignes.push("  - " + p.name + " (reste " + p.stock + ")")
+      );
+    }
+    return (
+      "📦 *ALERTE STOCK - LA TOUCHE D*\n\n" +
+      lignes.join("\n") +
+      "\n\n_Pense a faire les achats necessaires._"
+    );
+  };
+
+  const envoyerAlerteStock = () => {
+    const message = buildStockMessage();
+    const encoded = encodeURIComponent(message);
+    const url = "https://wa.me/2250708175027?text=" + encoded;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+
     date: format(new Date(), "dd MMMM yyyy", { locale: fr }),
     ...stats,
     _messageText: buildRapportMessage({
@@ -380,6 +428,72 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {(stockAlerts.ruptures.length > 0 || stockAlerts.bientotRupture.length > 0) && (
+        <div
+          className="card"
+          style={{
+            padding: 14,
+            border: stockAlerts.ruptures.length ? "2px solid #FCA5A5" : "2px solid #FDE68A",
+            background: stockAlerts.ruptures.length ? "#FEF2F2" : "#FFFBEB"
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <PackageX size={17} color={stockAlerts.ruptures.length ? "#DC2626" : "#D97706"} />
+            <span style={{ fontWeight: 700, fontSize: 14 }}>Alerte stock</span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+            {stockAlerts.ruptures.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "7px 10px",
+                  background: "white",
+                  borderRadius: 8
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                <span
+                  className="badge"
+                  style={{ background: "#FEE2E2", color: "#B91C1C", display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  <AlertTriangle size={10} /> Rupture
+                </span>
+              </div>
+            ))}
+            {stockAlerts.bientotRupture.map((p) => (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "7px 10px",
+                  background: "white",
+                  borderRadius: 8
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                <span className="badge" style={{ background: "#FEF3C7", color: "#92400E" }}>
+                  Reste {p.stock}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <button
+            className="btn"
+            style={{ background: "#25D366", color: "white", width: "100%", gap: 7, padding: "11px 14px", fontSize: 13 }}
+            onClick={envoyerAlerteStock}
+          >
+            <MessageCircle size={16} /> Envoyer l'alerte sur WhatsApp
+          </button>
+        </div>
+      )}
 
       <div className="card" style={{ padding: 14 }}>
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>💳 Ventes par mode de paiement</div>
