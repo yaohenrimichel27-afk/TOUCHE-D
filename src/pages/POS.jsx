@@ -25,10 +25,11 @@ import {
   X,
   ArrowLeft,
   Banknote,
-  AlertTriangle
+  AlertTriangle,
+  Layers
 } from "lucide-react";
 
-const CATEGORIES = ["Tous", "Plats", "Boissons", "Extras"];
+const CATEGORIES = ["Tous", "Plats", "Boissons", "Vins", "Extras"];
 const SEUIL_ALERTE = 5;
 
 const PAYMENT_METHODS = [
@@ -49,13 +50,36 @@ const PAYMENT_METHODS = [
 
 const getEmoji = (category) => {
   if (category === "Boissons") return "🥤";
+  if (category === "Vins") return "🍷";
   if (category === "Extras") return "🍟";
   return "🍽️";
 };
 
 const hasStockTracking = (p) => p.stock !== undefined && p.stock !== null;
-const isOutOfStock = (p) => hasStockTracking(p) && p.stock <= 0;
-const isLowStock = (p) => hasStockTracking(p) && p.stock > 0 && p.stock <= SEUIL_ALERTE;
+const hasVariants = (p) => p.variants && p.variants.length > 0;
+
+// Plus petite consommation parmi les variantes (pour savoir si on peut encore vendre QUELQUE CHOSE)
+const minConsommation = (p) => {
+  if (!hasVariants(p)) return 1;
+  return Math.min(...p.variants.map((v) => v.consommation));
+};
+
+const isOutOfStock = (p) => {
+  if (!hasStockTracking(p)) return false;
+  return p.stock < minConsommation(p);
+};
+
+const isLowStock = (p) => {
+  if (!hasStockTracking(p)) return false;
+  if (isOutOfStock(p)) return false;
+  return p.stock <= SEUIL_ALERTE;
+};
+
+// Verifie si une variante precise peut etre servie
+const canServeVariant = (p, variant) => {
+  if (!hasStockTracking(p)) return true;
+  return p.stock >= variant.consommation;
+};
 
 const ProductThumb = ({ product, size = 90 }) => {
   const [failed, setFailed] = useState(false);
@@ -122,6 +146,7 @@ export default function POS() {
   const [showPayment, setShowPayment] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [lastTotal, setLastTotal] = useState(0);
+  const [variantPicker, setVariantPicker] = useState(null);
 
   useEffect(() => {
     const q = query(collection(db, "products"), orderBy("name"));
@@ -150,38 +175,120 @@ export default function POS() {
   const cartTotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  const addToCart = (product) => {
+  // Cle unique panier : id produit + nom variante (ou "default")
+  const cartKey = (productId, variantNom) => productId + "::" + (variantNom || "default");
+
+  // Total deja consomme dans le panier pour un produit (toutes variantes confondues)
+  const consommationDansPanier = (productId) => {
+    return cart
+      .filter((i) => i.productId === productId)
+      .reduce((s, i) => s + i.consommation * i.qty, 0);
+  };
+
+  const addSimpleToCart = (product) => {
     if (isOutOfStock(product)) {
       toast(product.name + " est en rupture de stock", "error");
       return;
     }
     setCart((prev) => {
-      const ex = prev.find((i) => i.id === product.id);
-      const currentQtyInCart = ex ? ex.qty : 0;
+      const key = cartKey(product.id, null);
+      const ex = prev.find((i) => i.cartId === key);
 
-      if (hasStockTracking(product) && currentQtyInCart + 1 > product.stock) {
-        toast("Stock insuffisant pour " + product.name, "error");
-        return prev;
+      if (hasStockTracking(product)) {
+        const dejaConsomme = consommationDansPanier(product.id);
+        if (dejaConsomme + 1 > product.stock) {
+          toast("Stock insuffisant pour " + product.name, "error");
+          return prev;
+        }
       }
 
       if (ex) {
-        return prev.map((i) =>
-          i.id === product.id ? { ...i, qty: i.qty + 1 } : i
-        );
+        return prev.map((i) => (i.cartId === key ? { ...i, qty: i.qty + 1 } : i));
       }
-      return [...prev, { ...product, qty: 1 }];
+      return [
+        ...prev,
+        {
+          cartId: key,
+          productId: product.id,
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          category: product.category,
+          imageUrl: product.imageUrl,
+          consommation: 1,
+          variantNom: null,
+          qty: 1
+        }
+      ];
     });
   };
 
-  const updateQty = (id, delta) => {
+  const addVariantToCart = (product, variant) => {
+    if (!canServeVariant(product, variant)) {
+      toast("Stock insuffisant pour " + variant.nom, "error");
+      return;
+    }
+    setCart((prev) => {
+      const key = cartKey(product.id, variant.nom);
+      const ex = prev.find((i) => i.cartId === key);
+
+      if (hasStockTracking(product)) {
+        const dejaConsomme = consommationDansPanier(product.id);
+        if (dejaConsomme + variant.consommation > product.stock) {
+          toast("Stock insuffisant pour " + variant.nom, "error");
+          return prev;
+        }
+      }
+
+      if (ex) {
+        return prev.map((i) => (i.cartId === key ? { ...i, qty: i.qty + 1 } : i));
+      }
+      return [
+        ...prev,
+        {
+          cartId: key,
+          productId: product.id,
+          id: product.id,
+          name: product.name + " (" + variant.nom + ")",
+          price: variant.prix,
+          category: product.category,
+          imageUrl: product.imageUrl,
+          consommation: variant.consommation,
+          variantNom: variant.nom,
+          qty: 1
+        }
+      ];
+    });
+    setVariantPicker(null);
+  };
+
+  const handleProductClick = (product) => {
+    if (isOutOfStock(product)) {
+      toast(product.name + " est en rupture de stock", "error");
+      return;
+    }
+    if (hasVariants(product)) {
+      setVariantPicker(product);
+    } else {
+      addSimpleToCart(product);
+    }
+  };
+
+  const updateQty = (cartId, delta) => {
     setCart((prev) =>
       prev
         .map((i) => {
-          if (i.id !== id) return i;
+          if (i.cartId !== cartId) return i;
           const newQty = i.qty + delta;
-          if (delta > 0 && hasStockTracking(i) && newQty > i.stock) {
-            toast("Stock insuffisant", "error");
-            return i;
+          if (delta > 0) {
+            const product = products.find((p) => p.id === i.productId);
+            if (product && hasStockTracking(product)) {
+              const dejaConsomme = consommationDansPanier(i.productId);
+              if (dejaConsomme + i.consommation > product.stock) {
+                toast("Stock insuffisant", "error");
+                return i;
+              }
+            }
           }
           return { ...i, qty: newQty };
         })
@@ -189,8 +296,8 @@ export default function POS() {
     );
   };
 
-  const removeFromCart = (id) => {
-    setCart((prev) => prev.filter((i) => i.id !== id));
+  const removeFromCart = (cartId) => {
+    setCart((prev) => prev.filter((i) => i.cartId !== cartId));
   };
 
   const openPaymentStep = () => {
@@ -203,15 +310,21 @@ export default function POS() {
     if (!paymentMethod) return toast("Choisis un mode de paiement", "error");
     setLoading(true);
     try {
-      // Decremente le stock pour chaque produit concerne (transaction securisee)
-      for (const item of cart) {
-        if (hasStockTracking(item)) {
-          const productRef = doc(db, "products", item.id);
+      const consommationParProduit = {};
+      cart.forEach((item) => {
+        consommationParProduit[item.productId] =
+          (consommationParProduit[item.productId] || 0) + item.consommation * item.qty;
+      });
+
+      for (const productId of Object.keys(consommationParProduit)) {
+        const product = products.find((p) => p.id === productId);
+        if (product && hasStockTracking(product)) {
+          const productRef = doc(db, "products", productId);
           await runTransaction(db, async (transaction) => {
             const snap = await transaction.get(productRef);
             if (!snap.exists()) return;
             const currentStock = snap.data().stock || 0;
-            const newStock = Math.max(0, currentStock - item.qty);
+            const newStock = Math.max(0, currentStock - consommationParProduit[productId]);
             transaction.update(productRef, { stock: newStock });
           });
         }
@@ -242,6 +355,117 @@ export default function POS() {
       setLoading(false);
     }
   };
+
+  /* ── VARIANT PICKER ── */
+  if (variantPicker) {
+    const product = variantPicker;
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.55)",
+          zIndex: 10000,
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "center"
+        }}
+        onClick={() => setVariantPicker(null)}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: "white",
+            borderRadius: "20px 20px 0 0",
+            width: "100%",
+            maxWidth: 480,
+            padding: 22,
+            paddingBottom: "calc(22px + env(safe-area-inset-bottom))",
+            animation: "slideUp 0.3s ease"
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 16
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  background: "var(--brand-pale)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 20
+                }}
+              >
+                {product.imageUrl ? (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                ) : (
+                  getEmoji(product.category)
+                )}
+              </div>
+              <h2 style={{ fontWeight: 800, fontSize: 17 }}>{product.name}</h2>
+            </div>
+            <button className="btn btn-icon btn-secondary" onClick={() => setVariantPicker(null)}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <p style={{ fontSize: 12, color: "var(--gray-500)", marginBottom: 12 }}>
+            Choisis la quantite
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {product.variants.map((v, i) => {
+              const possible = canServeVariant(product, v);
+              return (
+                <button
+                  key={i}
+                  onClick={() => possible && addVariantToCart(product, v)}
+                  disabled={!possible}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: "2px solid var(--gray-100)",
+                    background: possible ? "white" : "var(--gray-100)",
+                    cursor: possible ? "pointer" : "not-allowed",
+                    opacity: possible ? 1 : 0.5
+                  }}
+                >
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{v.nom}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {!possible && (
+                      <span style={{ fontSize: 10, color: "var(--danger)", fontWeight: 700 }}>
+                        Indisponible
+                      </span>
+                    )}
+                    <span style={{ fontWeight: 800, fontSize: 15, color: "var(--brand)" }}>
+                      {v.prix.toLocaleString("fr-FR")} F
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showPayment) {
     return (
@@ -464,7 +688,7 @@ export default function POS() {
           ) : (
             cart.map((item) => (
               <div
-                key={item.id}
+                key={item.cartId}
                 className="card"
                 style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}
               >
@@ -501,7 +725,7 @@ export default function POS() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                   <button
-                    onClick={() => updateQty(item.id, -1)}
+                    onClick={() => updateQty(item.cartId, -1)}
                     style={{
                       width: 30,
                       height: 30,
@@ -520,7 +744,7 @@ export default function POS() {
                     {item.qty}
                   </span>
                   <button
-                    onClick={() => updateQty(item.id, 1)}
+                    onClick={() => updateQty(item.cartId, 1)}
                     style={{
                       width: 30,
                       height: 30,
@@ -538,7 +762,7 @@ export default function POS() {
                   </button>
                 </div>
                 <button
-                  onClick={() => removeFromCart(item.id)}
+                  onClick={() => removeFromCart(item.cartId)}
                   style={{
                     background: "none",
                     border: "none",
@@ -721,23 +945,27 @@ export default function POS() {
         }}
       >
         {filtered.map((product) => {
-          const inCart = cart.find((i) => i.id === product.id);
+          const productInCart = cart.some((i) => i.productId === product.id);
+          const cartQtyTotal = cart
+            .filter((i) => i.productId === product.id)
+            .reduce((s, i) => s + i.qty, 0);
           const outOfStock = isOutOfStock(product);
           const lowStock = isLowStock(product);
+          const variant = hasVariants(product);
 
           return (
             <button
               key={product.id}
-              onClick={() => addToCart(product)}
+              onClick={() => handleProductClick(product)}
               disabled={outOfStock}
               style={{
                 background: "var(--white)",
-                border: inCart ? "2px solid var(--brand)" : "2px solid transparent",
+                border: productInCart ? "2px solid var(--brand)" : "2px solid transparent",
                 borderRadius: 14,
                 padding: 0,
                 cursor: outOfStock ? "not-allowed" : "pointer",
                 textAlign: "left",
-                boxShadow: inCart ? "0 3px 14px rgba(200,75,15,0.18)" : "var(--shadow)",
+                boxShadow: productInCart ? "0 3px 14px rgba(200,75,15,0.18)" : "var(--shadow)",
                 transition: "all 0.12s",
                 overflow: "hidden",
                 display: "flex",
@@ -746,7 +974,7 @@ export default function POS() {
                 opacity: outOfStock ? 0.55 : 1
               }}
             >
-              {inCart && !outOfStock && (
+              {productInCart && !outOfStock && (
                 <div
                   style={{
                     position: "absolute",
@@ -766,7 +994,29 @@ export default function POS() {
                     boxShadow: "0 2px 6px rgba(200,75,15,0.4)"
                   }}
                 >
-                  {inCart.qty}
+                  {cartQtyTotal}
+                </div>
+              )}
+
+              {variant && !outOfStock && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 7,
+                    left: 7,
+                    zIndex: 2,
+                    background: "rgba(0,0,0,0.55)",
+                    color: "white",
+                    borderRadius: 6,
+                    padding: "2px 6px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                    fontSize: 9,
+                    fontWeight: 700
+                  }}
+                >
+                  <Layers size={9} /> Choix
                 </div>
               )}
 
@@ -816,7 +1066,7 @@ export default function POS() {
                   {product.name}
                 </div>
 
-                {lowStock && !outOfStock && (
+                {lowStock && (
                   <div
                     style={{
                       display: "flex",
@@ -834,7 +1084,9 @@ export default function POS() {
 
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand)" }}>
-                    {product.price.toLocaleString("fr-FR")} F
+                    {variant
+                      ? "Dès " + Math.min(...product.variants.map((v) => v.prix)).toLocaleString("fr-FR") + " F"
+                      : product.price.toLocaleString("fr-FR") + " F"}
                   </span>
                   {!outOfStock && (
                     <div
@@ -842,13 +1094,13 @@ export default function POS() {
                         width: 24,
                         height: 24,
                         borderRadius: "50%",
-                        background: inCart ? "var(--brand)" : "var(--gray-100)",
+                        background: productInCart ? "var(--brand)" : "var(--gray-100)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center"
                       }}
                     >
-                      <Plus size={13} color={inCart ? "white" : "var(--gray-500)"} />
+                      <Plus size={13} color={productInCart ? "white" : "var(--gray-500)"} />
                     </div>
                   )}
                 </div>
