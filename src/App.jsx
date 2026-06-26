@@ -7,6 +7,7 @@ import AdminLayout from "./components/admin/AdminLayout";
 import Dashboard from "./pages/admin/Dashboard";
 import Commandes from "./pages/admin/Commandes";
 import Menu from "./pages/admin/Menu";
+import Depenses from "./pages/admin/Depenses";
 import Rapports from "./pages/admin/Rapports";
 import Utilisateurs from "./pages/admin/Utilisateurs";
 import Parametres from "./pages/admin/Parametres";
@@ -15,14 +16,34 @@ import "./styles/global.css";
 function AppRoutes() {
   const { user, userData, loading } = useAuth();
 
-  if (loading) return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--dark)" }}>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ width: 40, height: 40, border: "3px solid rgba(200,75,15,0.3)", borderTopColor: "var(--brand)", borderRadius: "50%", animation: "spin 0.7s linear infinite", margin: "0 auto 16px" }} />
-        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Chargement...</div>
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "var(--dark)"
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              border: "3px solid rgba(200,75,15,0.3)",
+              borderTopColor: "var(--brand)",
+              borderRadius: "50%",
+              animation: "spin 0.7s linear infinite",
+              margin: "0 auto 16px"
+            }}
+          />
+          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Chargement...</div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   if (!user) return <Login />;
 
@@ -33,6 +54,7 @@ function AppRoutes() {
           <Route index element={<Dashboard />} />
           <Route path="commandes" element={<Commandes />} />
           <Route path="menu" element={<Menu />} />
+          <Route path="depenses" element={<Depenses />} />
           <Route path="rapports" element={<Rapports />} />
           <Route path="utilisateurs" element={<Utilisateurs />} />
           <Route path="parametres" element={<Parametres />} />
