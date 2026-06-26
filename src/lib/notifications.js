@@ -1,11 +1,36 @@
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { db } from "./firebase";
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import app from "./firebase";
 
-const VAPID_KEY = "BAkn30Zbp4q9KbdcSCBwQGg2RuQQylEY1y4CnzzlSf3WxL0i8Mv9hKVuXWwabXWvVDVOHs0I-tehuaJdPv73FIM";
+const VAPID_KEY =
+  "BAkn30Zbp4q9KbdcSCBwQGg2RuQQylEY1y4CnzzlSf3WxL0i8Mv9hKVuXWwabXWvVDVOHs0I-tehuaJdPv73FIM";
 
 let messaging = null;
+let swRegistration = null;
+
+function isMessagingSupported() {
+  return (
+    typeof window !== "undefined" &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window
+  );
+}
+
+async function registerServiceWorker() {
+  if (swRegistration) return swRegistration;
+  try {
+    swRegistration = await navigator.serviceWorker.register(
+      "/firebase-messaging-sw.js"
+    );
+    await navigator.serviceWorker.ready;
+    return swRegistration;
+  } catch (err) {
+    console.error("SW registration error:", err);
+    return null;
+  }
+}
 
 function getMessagingInstance() {
   if (!messaging) {
@@ -14,41 +39,52 @@ function getMessagingInstance() {
   return messaging;
 }
 
-/**
- * Demande la permission + récupère le token FCM
- * Sauvegarde le token dans Firestore sous /settings/fcm
- */
 export async function activerNotifications(userId) {
   try {
-    // iOS Safari nécessite une action utilisateur pour demander la permission
+    if (!isMessagingSupported()) {
+      return {
+        success: false,
+        reason: "Notifications non supportees sur ce navigateur"
+      };
+    }
+
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
-      return { success: false, reason: "Permission refusée" };
+      return { success: false, reason: "Permission refusee" };
+    }
+
+    const registration = await registerServiceWorker();
+    if (!registration) {
+      return { success: false, reason: "Service worker indisponible" };
     }
 
     const msg = getMessagingInstance();
-    const token = await getToken(msg, { vapidKey: VAPID_KEY });
+    const token = await getToken(msg, {
+      vapidKey: VAPID_KEY,
+      serviceWorkerRegistration: registration
+    });
 
     if (!token) return { success: false, reason: "Token non obtenu" };
 
-    // Sauvegarde dans Firestore
-    await setDoc(doc(db, "settings", "fcm"), {
-      token,
-      userId,
-      updatedAt: new Date()
-    }, { merge: true });
+    await setDoc(
+      doc(db, "settings", "fcm"),
+      {
+        token,
+        userId,
+        updatedAt: new Date()
+      },
+      { merge: true }
+    );
 
     return { success: true, token };
   } catch (err) {
     console.error("FCM error:", err);
-    return { success: false, reason: err.message };
+    return { success: false, reason: err.message || "Erreur inconnue" };
   }
 }
 
-/**
- * Écoute les notifications en foreground
- */
 export function ecouterNotifications(callback) {
+  if (!isMessagingSupported()) return () => {};
   try {
     const msg = getMessagingInstance();
     return onMessage(msg, (payload) => {
@@ -59,26 +95,36 @@ export function ecouterNotifications(callback) {
   }
 }
 
-/**
- * Envoie une notification locale (dans l'app)
- * pour l'objectif atteint
- */
 export function notifierObjectifAtteint(totalVentes, objectif) {
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
 
-  new Notification("🎯 Objectif atteint ! — La Touche D", {
-    body: `Félicitations ! ${totalVentes.toLocaleString("fr-FR")} FCFA de ventes aujourd'hui. Objectif de ${objectif.toLocaleString("fr-FR")} FCFA dépassé ! 🔥`,
-    icon: "/favicon.svg",
-    badge: "/favicon.svg",
-    vibrate: [300, 100, 300, 100, 300],
-    tag: "objectif-atteint", // évite les doublons
-  });
+  if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+    navigator.serviceWorker.ready.then((registration) => {
+      registration.showNotification("🎯 Objectif atteint ! — La Touche D", {
+        body:
+          "Felicitations ! " +
+          totalVentes.toLocaleString("fr-FR") +
+          " FCFA de ventes aujourd'hui. Objectif de " +
+          objectif.toLocaleString("fr-FR") +
+          " FCFA depasse ! 🔥",
+        icon: "/favicon.svg",
+        badge: "/favicon.svg",
+        vibrate: [300, 100, 300, 100, 300],
+        tag: "objectif-atteint"
+      });
+    });
+  } else {
+    new Notification("🎯 Objectif atteint ! — La Touche D", {
+      body:
+        "Felicitations ! " +
+        totalVentes.toLocaleString("fr-FR") +
+        " FCFA de ventes aujourd'hui.",
+      icon: "/favicon.svg"
+    });
+  }
 }
 
-/**
- * Récupère l'objectif journalier depuis Firestore
- */
 export async function getObjectif() {
   try {
     const snap = await getDoc(doc(db, "settings", "objectif"));
@@ -88,9 +134,6 @@ export async function getObjectif() {
   }
 }
 
-/**
- * Sauvegarde l'objectif journalier
- */
 export async function setObjectif(montant) {
   await setDoc(doc(db, "settings", "objectif"), { montant }, { merge: true });
 }
