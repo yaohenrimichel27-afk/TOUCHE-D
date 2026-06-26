@@ -239,19 +239,40 @@ export default function Dashboard() {
     return { ruptures, bientotRupture };
   }, [products]);
 
+  const groupByCategory = (liste) => {
+    const groupes = {};
+    liste.forEach((p) => {
+      const cat = p.category || "Autres";
+      if (!groupes[cat]) groupes[cat] = [];
+      groupes[cat].push(p);
+    });
+    return groupes;
+  };
+
   const buildStockMessage = () => {
     const lignes = [];
+
     if (stockAlerts.ruptures.length) {
       lignes.push("🔴 *EN RUPTURE :*");
-      stockAlerts.ruptures.forEach((p) => lignes.push("  - " + p.name));
+      const parCategorie = groupByCategory(stockAlerts.ruptures);
+      Object.entries(parCategorie).forEach(([cat, produits]) => {
+        lignes.push("_" + cat + "_");
+        produits.forEach((p) => lignes.push("  - " + p.name));
+      });
     }
+
     if (stockAlerts.bientotRupture.length) {
       if (lignes.length) lignes.push("");
       lignes.push("🟠 *STOCK FAIBLE :*");
-      stockAlerts.bientotRupture.forEach((p) =>
-        lignes.push("  - " + p.name + " (reste " + p.stock + ")")
-      );
+      const parCategorie = groupByCategory(stockAlerts.bientotRupture);
+      Object.entries(parCategorie).forEach(([cat, produits]) => {
+        lignes.push("_" + cat + "_");
+        produits.forEach((p) =>
+          lignes.push("  - " + p.name + " (reste " + p.stock + ")")
+        );
+      });
     }
+
     return (
       "📦 *ALERTE STOCK - LA TOUCHE D*\n\n" +
       lignes.join("\n") +
@@ -452,46 +473,97 @@ export default function Dashboard() {
             <span style={{ fontWeight: 700, fontSize: 14 }}>Alerte stock</span>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
-            {stockAlerts.ruptures.map((p) => (
-              <div
-                key={p.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "7px 10px",
-                  background: "white",
-                  borderRadius: 8
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
-                <span
-                  className="badge"
-                  style={{ background: "#FEE2E2", color: "#B91C1C", display: "flex", alignItems: "center", gap: 4 }}
-                >
-                  <AlertTriangle size={10} /> Rupture
-                </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 14 }}>
+            {stockAlerts.ruptures.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {Object.entries(groupByCategory(stockAlerts.ruptures)).map(([cat, produits]) => (
+                  <div key={cat}>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "#B91C1C",
+                        textTransform: "uppercase",
+                        marginBottom: 4,
+                        marginTop: 4
+                      }}
+                    >
+                      {cat}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {produits.map((p) => (
+                        <div
+                          key={p.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "7px 10px",
+                            background: "white",
+                            borderRadius: 8
+                          }}
+                        >
+                          <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                          <span
+                            className="badge"
+                            style={{
+                              background: "#FEE2E2",
+                              color: "#B91C1C",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4
+                            }}
+                          >
+                            <AlertTriangle size={10} /> Rupture
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-            {stockAlerts.bientotRupture.map((p) => (
-              <div
-                key={p.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "7px 10px",
-                  background: "white",
-                  borderRadius: 8
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
-                <span className="badge" style={{ background: "#FEF3C7", color: "#92400E" }}>
-                  Reste {p.stock}
-                </span>
+            )}
+
+            {stockAlerts.bientotRupture.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {Object.entries(groupByCategory(stockAlerts.bientotRupture)).map(([cat, produits]) => (
+                  <div key={cat}>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "#92400E",
+                        textTransform: "uppercase",
+                        marginBottom: 4,
+                        marginTop: 4
+                      }}
+                    >
+                      {cat}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {produits.map((p) => (
+                        <div
+                          key={p.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "7px 10px",
+                            background: "white",
+                            borderRadius: 8
+                          }}
+                        >
+                          <span style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                          <span className="badge" style={{ background: "#FEF3C7", color: "#92400E" }}>
+                            Reste {p.stock}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
 
           <button
