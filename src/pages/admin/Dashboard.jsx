@@ -265,15 +265,14 @@ export default function Dashboard() {
     const url = "https://wa.me/2250708175027?text=" + encoded;
     window.open(url, "_blank", "noopener,noreferrer");
   };
-
-
+  const rapportData = {
     date: format(new Date(), "dd MMMM yyyy", { locale: fr }),
-    ...stats,
-    _messageText: buildRapportMessage({
-      date: format(new Date(), "dd MMMM yyyy", { locale: fr }),
-      ...stats
-    })
-  };
+    totalVentes: stats.totalVentes,
+    nbCommandes: stats.nbCommandes,
+    platsVendus: stats.platsVendus,
+    boissonsVendues: stats.boissonsVendues,
+    topProduits: stats.topProduits,
+
 
   const totalPaiements =
     stats.paiementMap.especes + stats.paiementMap.orange_money + stats.paiementMap.wave;
